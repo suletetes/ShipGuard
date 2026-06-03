@@ -1,0 +1,61 @@
+version: 0.2
+
+env:
+  variables:
+    NODE_ENV: test
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+    commands:
+      - echo "Installing dependencies..."
+      - npm ci
+      - echo "Installing Trivy..."
+      - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+      - echo "Installing git-secrets..."
+      - git clone https://github.com/awslabs/git-secrets.git && cd git-secrets && make install && cd .. && rm -rf git-secrets
+      - git secrets --register-aws
+
+  pre_build:
+    commands:
+      - echo "Running security scans..."
+      - echo "Running npm audit..."
+      - npm audit --audit-level=high
+      - echo "Running Trivy filesystem scan..."
+      - trivy fs --severity HIGH,CRITICAL --exit-code 1 .
+      - echo "Running git-secrets scan..."
+      - git secrets --scan
+      - echo "Running tests..."
+      - npm test -- --reporter junit --outputFile test-results/junit.xml
+
+  build:
+    commands:
+      - echo "Building application..."
+      - npm run build
+      - echo "Copying views if they exist..."
+      - if [ -d "src/views" ]; then cp -r src/views dist/views; fi
+
+  post_build:
+    commands:
+      - echo "Packaging artifacts..."
+      - cp package.json dist/
+      - cp package-lock.json dist/
+      - cp appspec.yml dist/
+      - cp -r scripts dist/
+
+artifacts:
+  files:
+    - '**/*'
+  base-directory: dist
+
+reports:
+  test-results:
+    files:
+      - junit.xml
+    base-directory: test-results
+    file-format: JUNITXML
+
+cache:
+  paths:
+    - node_modules/**/*
