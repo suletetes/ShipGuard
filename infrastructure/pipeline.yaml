@@ -1,0 +1,577 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ShipGuard CI/CD Pipeline - S3 Artifact Bucket, SNS Topics, IAM Roles,
+  CodeBuild, CodeDeploy, and CodePipeline for the ShipGuard deployment platform.
+
+Parameters:
+  NotificationEmail:
+    Type: String
+    Description: Email address for SNS notification subscriptions
+
+  GitHubOwner:
+    Type: String
+    Description: GitHub repository owner
+
+  GitHubRepo:
+    Type: String
+    Description: GitHub repository name
+
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: GitHub branch to track
+
+  CodeStarConnectionArn:
+    Type: String
+    Description: ARN of the CodeStar connection to GitHub
+
+Resources:
+  # ============================================================
+  # S3 Artifact Bucket
+  # ============================================================
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub shipguard-artifacts-${AWS::AccountId}
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+      Tags:
+        - Key: Name
+          Value: shipguard-artifacts
+        - Key: Project
+          Value: ShipGuard
+
+  # ============================================================
+  # SNS Topics and Subscriptions
+  # ============================================================
+  PipelineNotificationsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: shipguard-pipeline-notifications
+      Tags:
+        - Key: Name
+          Value: shipguard-pipeline-notifications
+        - Key: Project
+          Value: ShipGuard
+
+  PipelineNotificationsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref PipelineNotificationsTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  ApprovalNotificationsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: shipguard-approval-notifications
+      Tags:
+        - Key: Name
+          Value: shipguard-approval-notifications
+        - Key: Project
+          Value: ShipGuard
+
+  ApprovalNotificationsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref ApprovalNotificationsTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  DeploymentNotificationsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: shipguard-deployment-notifications
+      Tags:
+        - Key: Name
+          Value: shipguard-deployment-notifications
+        - Key: Project
+          Value: ShipGuard
+
+  DeploymentNotificationsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref DeploymentNotificationsTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  # ============================================================
+  # IAM Roles
+  # ============================================================
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: shipguard-pipeline-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PipelinePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetBucketVersioning
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub ${ArtifactBucket.Arn}/*
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - codedeploy:CreateDeployment
+                  - codedeploy:GetDeployment
+                  - codedeploy:GetDeploymentConfig
+                  - codedeploy:GetApplicationRevision
+                  - codedeploy:RegisterApplicationRevision
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource:
+                  - !Ref PipelineNotificationsTopic
+                  - !Ref ApprovalNotificationsTopic
+                  - !Ref DeploymentNotificationsTopic
+              - Effect: Allow
+                Action:
+                  - codestar-connections:UseConnection
+                Resource: !Ref CodeStarConnectionArn
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: '*'
+                Condition:
+                  StringEqualsIfExists:
+                    iam:PassedToService:
+                      - codedeploy.amazonaws.com
+      Tags:
+        - Key: Name
+          Value: shipguard-pipeline-role
+        - Key: Project
+          Value: ShipGuard
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: shipguard-codebuild-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource:
+                  - !Sub ${ArtifactBucket.Arn}/*
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/shipguard-*
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/shipguard-*:*
+              - Effect: Allow
+                Action:
+                  - codebuild:CreateReportGroup
+                  - codebuild:CreateReport
+                  - codebuild:UpdateReport
+                  - codebuild:BatchPutTestCases
+                Resource:
+                  - !Sub arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:report-group/shipguard-*
+      Tags:
+        - Key: Name
+          Value: shipguard-codebuild-role
+        - Key: Project
+          Value: ShipGuard
+
+  # ============================================================
+  # CodeBuild Project
+  # ============================================================
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: shipguard-build
+      Description: Build, test, and security scan for ShipGuard deployments
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      TimeoutInMinutes: 15
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec.yml
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        Type: LINUX_CONTAINER
+      Cache:
+        Type: S3
+        Location: !Sub ${ArtifactBucket}/codebuild-cache
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: /aws/codebuild/shipguard-build
+      Tags:
+        - Key: Name
+          Value: shipguard-build
+        - Key: Project
+          Value: ShipGuard
+
+  CodeBuildReportsGroup:
+    Type: AWS::CodeBuild::ReportGroup
+    Properties:
+      Name: shipguard-build-test-reports
+      Type: TEST
+      ExportConfig:
+        ExportConfigType: NO_EXPORT
+      Tags:
+        - Key: Name
+          Value: shipguard-build-test-reports
+        - Key: Project
+          Value: ShipGuard
+
+  # ============================================================
+  # CodeDeploy Applications and Deployment Groups
+  # ============================================================
+
+  # --- Staging CodeDeploy ---
+  StagingApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: shipguard-staging
+      ComputePlatform: Server
+      Tags:
+        - Key: Name
+          Value: shipguard-staging
+        - Key: Project
+          Value: ShipGuard
+
+  StagingDeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref StagingApplication
+      DeploymentGroupName: shipguard-staging-dg
+      ServiceRoleArn: !ImportValue staging-CodeDeployRoleArn
+      AutoScalingGroups:
+        - !ImportValue staging-ASGName
+      DeploymentConfigName: CodeDeployDefault.AllAtOnce
+      DeploymentStyle:
+        DeploymentOption: WITHOUT_TRAFFIC_CONTROL
+        DeploymentType: IN_PLACE
+      AutoRollbackConfiguration:
+        Enabled: true
+        Events:
+          - DEPLOYMENT_FAILURE
+      Tags:
+        - Key: Name
+          Value: shipguard-staging-dg
+        - Key: Project
+          Value: ShipGuard
+
+  # --- Production CodeDeploy ---
+  ProductionApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: shipguard-production
+      ComputePlatform: Server
+      Tags:
+        - Key: Name
+          Value: shipguard-production
+        - Key: Project
+          Value: ShipGuard
+
+  ProductionCanaryDeploymentConfig:
+    Type: AWS::CodeDeploy::DeploymentConfig
+    Properties:
+      DeploymentConfigName: shipguard-canary-10percent-5min
+      ComputePlatform: Server
+      TrafficRoutingConfig:
+        Type: TimeBasedCanary
+        TimeBasedCanary:
+          CanaryPercentage: 10
+          CanaryInterval: 5
+
+  ProductionDeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref ProductionApplication
+      DeploymentGroupName: shipguard-production-dg
+      ServiceRoleArn: !ImportValue production-CodeDeployRoleArn
+      AutoScalingGroups:
+        - !ImportValue production-ASGName
+      DeploymentConfigName: !Ref ProductionCanaryDeploymentConfig
+      DeploymentStyle:
+        DeploymentOption: WITH_TRAFFIC_CONTROL
+        DeploymentType: BLUE_GREEN
+      BlueGreenDeploymentConfiguration:
+        TerminateBlueInstancesOnDeploymentSuccess:
+          Action: TERMINATE
+          TerminationWaitTimeInMinutes: 5
+        DeploymentReadyOption:
+          ActionOnTimeout: CONTINUE_DEPLOYMENT
+          WaitTimeInMinutes: 0
+        GreenFleetProvisioningOption:
+          Action: COPY_AUTO_SCALING_GROUP
+      AutoRollbackConfiguration:
+        Enabled: true
+        Events:
+          - DEPLOYMENT_FAILURE
+          - DEPLOYMENT_STOP_ON_ALARM
+      AlarmConfiguration:
+        Enabled: true
+        Alarms:
+          - Name: !ImportValue production-5xxAlarmName
+      LoadBalancerInfo:
+        TargetGroupInfoList:
+          - Name: !ImportValue production-BlueTargetGroupName
+          - Name: !ImportValue production-GreenTargetGroupName
+      Tags:
+        - Key: Name
+          Value: shipguard-production-dg
+        - Key: Project
+          Value: ShipGuard
+
+  # ============================================================
+  # SNS Topic Policy for CodeStar Notifications
+  # ============================================================
+  PipelineNotificationsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codestar-notifications.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref PipelineNotificationsTopic
+      Topics:
+        - !Ref PipelineNotificationsTopic
+
+  # ============================================================
+  # CodePipeline
+  # ============================================================
+  ShipGuardPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: shipguard-pipeline
+      RoleArn: !GetAtt PipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+        # Stage 1: Source
+        - Name: Source
+          Actions:
+            - Name: GitHubSource
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: '1'
+              Configuration:
+                ConnectionArn: !Ref CodeStarConnectionArn
+                FullRepositoryId: !Sub ${GitHubOwner}/${GitHubRepo}
+                BranchName: !Ref GitHubBranch
+                OutputArtifactFormat: CODE_ZIP
+              OutputArtifacts:
+                - Name: SourceOutput
+              RunOrder: 1
+
+        # Stage 2: Build and Test
+        - Name: BuildAndTest
+          Actions:
+            - Name: CodeBuild
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: BuildOutput
+              RunOrder: 1
+
+        # Stage 3: Deploy to Staging
+        - Name: DeployToStaging
+          Actions:
+            - Name: DeployStaging
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CodeDeploy
+                Version: '1'
+              Configuration:
+                ApplicationName: !Ref StagingApplication
+                DeploymentGroupName: shipguard-staging-dg
+              InputArtifacts:
+                - Name: BuildOutput
+              RunOrder: 1
+
+        # Stage 4: Manual Approval
+        - Name: ManualApproval
+          Actions:
+            - Name: ApproveDeployment
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: '1'
+              Configuration:
+                NotificationArn: !Ref ApprovalNotificationsTopic
+                CustomData: "Review staging deployment and approve for production"
+              RunOrder: 1
+
+        # Stage 5: Deploy to Production
+        - Name: DeployToProduction
+          Actions:
+            - Name: DeployProduction
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CodeDeploy
+                Version: '1'
+              Configuration:
+                ApplicationName: !Ref ProductionApplication
+                DeploymentGroupName: shipguard-production-dg
+              InputArtifacts:
+                - Name: BuildOutput
+              RunOrder: 1
+      Tags:
+        - Key: Name
+          Value: shipguard-pipeline
+        - Key: Project
+          Value: ShipGuard
+
+  # ============================================================
+  # Pipeline Event Notification Rule
+  # ============================================================
+  PipelineNotificationRule:
+    Type: AWS::CodeStarNotifications::NotificationRule
+    Properties:
+      Name: shipguard-pipeline-events
+      DetailType: FULL
+      Resource: !Sub arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${ShipGuardPipeline}
+      EventTypeIds:
+        - codepipeline-pipeline-pipeline-execution-failed
+        - codepipeline-pipeline-pipeline-execution-succeeded
+        - codepipeline-pipeline-stage-execution-failed
+        - codepipeline-pipeline-action-execution-failed
+        - codepipeline-pipeline-manual-approval-needed
+      Targets:
+        - TargetType: SNS
+          TargetAddress: !Ref PipelineNotificationsTopic
+      Tags:
+        Name: shipguard-pipeline-events
+        Project: ShipGuard
+
+Outputs:
+  ArtifactBucketName:
+    Description: Name of the S3 artifact bucket
+    Value: !Ref ArtifactBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-ArtifactBucketName
+
+  ArtifactBucketArn:
+    Description: ARN of the S3 artifact bucket
+    Value: !GetAtt ArtifactBucket.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-ArtifactBucketArn
+
+  PipelineNotificationsTopicArn:
+    Description: ARN of the pipeline notifications SNS topic
+    Value: !Ref PipelineNotificationsTopic
+    Export:
+      Name: !Sub ${AWS::StackName}-PipelineNotificationsTopicArn
+
+  ApprovalNotificationsTopicArn:
+    Description: ARN of the approval notifications SNS topic
+    Value: !Ref ApprovalNotificationsTopic
+    Export:
+      Name: !Sub ${AWS::StackName}-ApprovalNotificationsTopicArn
+
+  DeploymentNotificationsTopicArn:
+    Description: ARN of the deployment notifications SNS topic
+    Value: !Ref DeploymentNotificationsTopic
+    Export:
+      Name: !Sub ${AWS::StackName}-DeploymentNotificationsTopicArn
+
+  PipelineRoleArn:
+    Description: Pipeline IAM Role ARN
+    Value: !GetAtt PipelineRole.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-PipelineRoleArn
+
+  CodeBuildRoleArn:
+    Description: CodeBuild IAM Role ARN
+    Value: !GetAtt CodeBuildRole.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-CodeBuildRoleArn
+
+  StagingApplicationName:
+    Description: Staging CodeDeploy Application Name
+    Value: !Ref StagingApplication
+    Export:
+      Name: !Sub ${AWS::StackName}-StagingApplicationName
+
+  StagingDeploymentGroupName:
+    Description: Staging CodeDeploy Deployment Group Name
+    Value: !Ref StagingDeploymentGroup
+    Export:
+      Name: !Sub ${AWS::StackName}-StagingDeploymentGroupName
+
+  ProductionApplicationName:
+    Description: Production CodeDeploy Application Name
+    Value: !Ref ProductionApplication
+    Export:
+      Name: !Sub ${AWS::StackName}-ProductionApplicationName
+
+  ProductionDeploymentGroupName:
+    Description: Production CodeDeploy Deployment Group Name
+    Value: !Ref ProductionDeploymentGroup
+    Export:
+      Name: !Sub ${AWS::StackName}-ProductionDeploymentGroupName
+
+  CodeBuildProjectName:
+    Description: Name of the CodeBuild project
+    Value: !Ref CodeBuildProject
+    Export:
+      Name: !Sub ${AWS::StackName}-CodeBuildProjectName
+
+  PipelineName:
+    Description: Name of the CodePipeline
+    Value: !Ref ShipGuardPipeline
+    Export:
+      Name: !Sub ${AWS::StackName}-PipelineName
