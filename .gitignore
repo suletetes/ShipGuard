@@ -1,4 +1,2 @@
-.kiro/specs/shipguard/.config.kiro
-.kiro/specs/shipguard/design.md
-.kiro/specs/shipguard/requirements.md
-.kiro/specs/shipguard/tasks.md
+.kiro/specs/
+docs/generate_architecture.py
