@@ -10,11 +10,11 @@ You push code, ShipGuard builds it, scans it for vulnerabilities, deploys to sta
 
 ShipGuard is a CodePipeline with five stages:
 
-1. **Source** — pulls from GitHub via CodeStar connection
-2. **Build and Test** — CodeBuild runs npm audit, Trivy, git-secrets, your test suite, then compiles TypeScript
-3. **Deploy to Staging** — in-place deployment to a single EC2 instance, health-checked
-4. **Manual Approval** — you get an email, you click approve (or reject)
-5. **Deploy to Production** — blue/green deployment: 10% traffic for 5 minutes, then remaining 90%
+1. **Source**  pulls from GitHub via CodeStar connection
+2. **Build and Test**  CodeBuild runs npm audit, Trivy, git-secrets, your test suite, then compiles TypeScript
+3. **Deploy to Staging**  in-place deployment to a single EC2 instance, health-checked
+4. **Manual Approval**  you get an email, you click approve (or reject)
+5. **Deploy to Production**  blue/green deployment: 10% traffic for 5 minutes, then remaining 90%
 
 If CloudWatch sees more than 10 5xx errors in 60 seconds during the canary phase, CodeDeploy shifts all traffic back to the old version and terminates the new instances. You get an SNS notification telling you what happened.
 
@@ -24,17 +24,17 @@ The pipeline deploys a TypeScript/Express app to EC2 instances behind Applicatio
 
 Everything is CloudFormation. Three stacks:
 
-- `infrastructure/staging.yaml` — VPC, ALB, single-instance ASG, security groups, IAM
-- `infrastructure/production.yaml` — VPC, ALB with dual target groups, multi-instance ASG, CloudWatch alarm, IAM
-- `infrastructure/pipeline.yaml` — CodePipeline, CodeBuild, CodeDeploy, S3 bucket, SNS topics, IAM roles
+- `infrastructure/staging.yaml`  VPC, ALB, single-instance ASG, security groups, IAM
+- `infrastructure/production.yaml`  VPC, ALB with dual target groups, multi-instance ASG, CloudWatch alarm, IAM
+- `infrastructure/pipeline.yaml`  CodePipeline, CodeBuild, CodeDeploy, S3 bucket, SNS topics, IAM roles
 
 ## Security scanning
 
 The build fails if any of these find problems:
 
-- `npm audit --audit-level=high` — dependency vulnerabilities
-- `trivy fs --severity HIGH,CRITICAL --exit-code 1` — OS and library vulns
-- `git secrets --scan` — accidentally committed AWS keys or secrets
+- `npm audit --audit-level=high`  dependency vulnerabilities
+- `trivy fs --severity HIGH,CRITICAL --exit-code 1`  OS and library vulns
+- `git secrets --scan`  accidentally committed AWS keys or secrets
 
 No high/critical vulns reach staging. Period.
 
