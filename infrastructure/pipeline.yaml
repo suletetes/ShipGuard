@@ -155,6 +155,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - codestar-connections:UseConnection
+                  - codeconnections:UseConnection
                 Resource: !Ref CodeStarConnectionArn
               - Effect: Allow
                 Action:
@@ -309,17 +310,6 @@ Resources:
         - Key: Project
           Value: ShipGuard
 
-  ProductionCanaryDeploymentConfig:
-    Type: AWS::CodeDeploy::DeploymentConfig
-    Properties:
-      DeploymentConfigName: shipguard-canary-10percent-5min
-      ComputePlatform: Server
-      TrafficRoutingConfig:
-        Type: TimeBasedCanary
-        TimeBasedCanary:
-          CanaryPercentage: 10
-          CanaryInterval: 5
-
   ProductionDeploymentGroup:
     Type: AWS::CodeDeploy::DeploymentGroup
     Properties:
@@ -328,7 +318,7 @@ Resources:
       ServiceRoleArn: !ImportValue production-CodeDeployRoleArn
       AutoScalingGroups:
         - !ImportValue production-ASGName
-      DeploymentConfigName: !Ref ProductionCanaryDeploymentConfig
+      DeploymentConfigName: CodeDeployDefault.AllAtOnce
       DeploymentStyle:
         DeploymentOption: WITH_TRAFFIC_CONTROL
         DeploymentType: BLUE_GREEN
