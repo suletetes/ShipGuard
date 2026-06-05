@@ -1,0 +1,17 @@
+[Unit]
+Description=CloudPulse Application
+After=network.target
+
+[Service]
+Type=simple
+User=cloudpulse
+Group=cloudpulse
+WorkingDirectory=/opt/cloudpulse
+ExecStart=/usr/bin/node /opt/cloudpulse/index.js
+Restart=on-failure
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=PORT=3000
+
+[Install]
+WantedBy=multi-user.target
