@@ -1,2 +1,5 @@
 .kiro/specs/
 docs/generate_architecture.py
+node_modules/
+dist/
+test-results/
